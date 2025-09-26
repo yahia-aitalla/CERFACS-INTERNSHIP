@@ -1,0 +1,56 @@
+# This file is read by: src/training/train.py
+
+data:
+  # List of experiment directories. Each directory must contain the HDF5 file below.
+  # You can provide one or many directories; multiple entries will be concatenated into one dataset.
+  experiments_dirs:
+    - /scratch/algo/aitalla/StageGitlab/data/ForcedTurbulence/forced256
+    # - /scratch/algo/aitalla/StageGitlab/data/ForcedTurbulence/simX  # add more runs if desired
+
+  # Name of the HDF5 file inside each experiment directory.
+  h5_name: vorticity.h5
+
+  # Dataset key inside the HDF5 file (group/dataset name).
+  key: vorticity
+
+  # Optional: limit the number of time steps read from each HDF5.
+  # Set to null to use the full trajectory.
+  db_size: null
+
+  # Batch size for training.
+  batch_size: 8
+
+  # Shuffle samples each epoch (recommended for SGD).
+  shuffle: true
+
+  # Number of worker processes for data loading.
+  num_workers: 0
+
+  # If training on GPU, setting this to true can speed up host→device transfers.
+  pin_memory: false
+
+model:
+  # The network expects a single-channel input frame and predicts a single-channel frame.
+  in_channels: 1
+  num_classes: 1
+
+  # Padding behavior for convolutions: zeros | circular.
+  padding_mode: zeros
+
+  # Spatial padding size (in pixels) used by the UNet blocks.
+  padding: 1
+
+optim:
+  # Learning rate for AdamW optimizer.
+  lr: 0.0003
+
+# Curriculum horizons (in steps ahead).
+# The dataset is built with nstep = max(curr_lr_steps).
+# During training, the model rolls out autoregressively and is penalized only on the
+# first n steps for each stage (n ∈ curr_lr_steps), in order, like a curriculum.
+# Example: [1, 2, 4, 8] means four stages; use [8] if you want a single stage at horizon 8.
+curr_lr_steps: 1     #[1, 2, 4, 8]
+
+train:
+  # Number of epochs PER STAGE (i.e., the loop over curr_lr_steps runs this many epochs each time).
+  epochs: 600

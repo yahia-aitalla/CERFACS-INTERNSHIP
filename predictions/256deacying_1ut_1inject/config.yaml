@@ -1,0 +1,39 @@
+# Inference configuration
+
+# Chemin vers le checkpoint
+checkpoint: /scratch/algo/aitalla/StageGitlab/runs/offline/256decaying1step/checkpoints/my_checkpoint_final.pth
+
+# ---- Modèle (doit correspondre aux hyperparamètres d'entraînement) ----
+model:
+  in_channels: 1          # entrée UNet (vorticité 1 canal)
+  num_classes: 1          # sortie UNet (vorticité 1 canal)
+  padding_mode: "zeros"   # "zeros", "reflect", "replicate", "circular"
+  padding: 1
+
+# Données réelles (HDF5 du solveur)
+data:
+  # Dossier qui contient le HDF5 réel (généré par le solveur)
+  experiment_dir: /scratch/algo/aitalla/StageGitlab/data/DecayingTurbulence/decaying256
+  # Nom du fichier HDF5 dans ce dossier
+  h5_name: "vorticity.h5"
+  # Nom du dataset à l’intérieur du HDF5
+  key: "vorticity"
+
+# Stratégie de rollout 
+rollout:
+  # "free"  : full autoregressive (seed = t0, puis uniquement les sorties du modèle)
+  # "chunked": autoregression par blocs, injection de la vérité terrain toutes les (block_n+1) étapes
+  mode: "chunked"
+  seed_index: 0     # index du frame initial (souvent 0)
+  block_n: 1        # utilisé seulement si mode == "chunked"
+
+# ---- Métriques ----
+metrics:
+  # false : TKE(t) moyenne spatiale
+  # true  : TKE(t) intégrale (pondérée par l’aire du domaine)
+  tke_area_weighted_total: false
+
+# ---- Tracés (PNG) ----
+plots:
+  show_km53: true   # afficher une pente de référence k^{-5/3} sur le spectre
+  show_km3: true   # afficher une pente de référence k^{-3} sur le spectre
