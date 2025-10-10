@@ -98,8 +98,8 @@ python -m src.datagen.generate   --config configs/data/decaying/decaying.yaml   
 
 **Outputs:** each generation produces a new experiment directory such as:
 ```
-data/ForcedTurbulence/gen_YYYYMMDD-HHMMSS_forced_seed42/{vorticity.h5, config.yaml}
-data/DecayingTurbulence/gen_YYYYMMDD-HHMMSS_decaying_seed42/{vorticity.h5, config.yaml}
+data/ForcedTurbulence/forced_seed42/{vorticity.h5, config.yaml}
+data/DecayingTurbulence/decaying_seed42/{vorticity.h5, config.yaml}
 ```
 
 **HDF5 content (schema):**
