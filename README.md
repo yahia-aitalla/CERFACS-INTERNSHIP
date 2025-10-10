@@ -2,8 +2,6 @@
 
 A modular, reproducible software stack for surrogate modeling of two-dimensional Navier–Stokes flows with convolutional neural networks. The stack provides **data generation**, **dataset construction**, **model definitions**, **offline training**, an **online-learning emulation pipeline**, and **inference and diagnostics**. The design emphasizes **general, machine-agnostic usage** and **reproducible configuration**.
 
-> This project **does not** report results in this document. The focus is solely on **goals**, **motivations**, **capabilities**, and a **clear user guide**.
-
 ---
 
 ## 1. Scope and Motivation
