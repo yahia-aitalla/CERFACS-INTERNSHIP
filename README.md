@@ -59,7 +59,6 @@ All `src/*` subpackages contain `__init__.py` to support `python -m` execution f
 - Core libraries: **PyTorch**, **NumPy**, **h5py**, **PyYAML**, **Matplotlib**, **TensorBoard**  
 - For data generation: **JAX** and **JAX-CFD** (CPU or GPU build as available)
 
-> **Note on I/O:** When reading HDF5 from network filesystems, set `num_workers=0` in the DataLoader to avoid multiprocessing I/O contention.
 
 ---
 
