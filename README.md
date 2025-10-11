@@ -1,231 +1,321 @@
-# Modular Pipeline for 2D CFD Surrogate Modeling (Offline & Online)
+# CFDStreamSurrogate
+**A modular pipeline for surrogate modeling of 2D CFD (forced & decaying turbulence) with offline training and online-learning emulation.**
 
-A modular, reproducible software stack for surrogate modeling of two-dimensional Navier–Stokes flows with convolutional neural networks. The stack provides **data generation**, **dataset construction**, **model definitions**, **offline training**, an **online-learning emulation pipeline**, and **inference and diagnostics**. The design emphasizes **general, machine-agnostic usage** and **reproducible configuration**.
+This repository provides an **end-to-end, reproducible** stack to (i) generate controlled 2D turbulence datasets using a **spectral solver**, (ii) train a **UNet** surrogate with **multi‑step rollout supervision** (including **curriculum** on horizon), (iii) emulate **online/streaming training** without epochs, and (iv) run **inference & diagnostics** (TKE, isotropic energy spectra, GIFs). The document is neutral and focuses on **objectives, capabilities, and usage**. No experiment claims are reported here.
 
----
-
-## 1. Scope and Motivation
-
-Modern CFD solvers generate high-rate streams of high-dimensional states. Persisting large offline datasets can become infeasible due to storage and I/O constraints. This repository targets two complementary needs:
-
-- **Surrogate modeling** for 2D turbulence (forced and decaying) using CNN-based predictors with multi-step rollout.
-- **Streaming/online training emulation**, enabling experimentation without requiring the full dataset to be stored on disk, and allowing study of continual learning behaviors under data-stream constraints.
-
-**Why an online-style pipeline?**
-- In many CFD scenarios, the unique realizations and/or long trajectories produce terabytes of data. Online-style training allows consuming the stream *as it is produced* (or loaded incrementally), reducing disk pressure and improving I/O locality.
-- Online-style training does **not** require epochs over a fixed corpus. Instead, it uses a flow of examples, buffering, and stopping criteria.
+> Data generation relies on the spectral Navier–Stokes solver implemented in **JAX‑CFD**. Please acknowledge the software accordingly: Google Research, “JAX‑CFD: Computational Fluid Dynamics in JAX,” GitHub, https://github.com/google/jax-cfd (accessed YYYY‑MM‑DD).
 
 ---
 
-## 2. References to the Underlying CFD Solver
-
-Data generation relies on the **spectral solver** implemented in **JAX-CFD**:
-
-- **JAX-CFD** (software): Google Research, “JAX-CFD: Computational Fluid Dynamics in JAX,” GitHub repository, available at: https://github.com/google/jax-cfd (accessed 2025-10-10).
-
-When publishing or sharing this work, please acknowledge JAX-CFD accordingly. If a formal citation entry is required, reference the software repository as above (or any official citation that the repository provides).
+## Table of Contents
+1. [Scope & Objectives](#scope--objectives)  
+2. [Key Features](#key-features)  
+3. [Repository Structure](#repository-structure)  
+4. [System Requirements](#system-requirements)  
+5. [Two Environments (Recommended Setup)](#two-environments-recommended-setup)  
+6. [Configure Local Paths (One-Time)](#configure-local-paths-one-time)  
+7. [Quick Start (TL;DR)](#quick-start-tldr)  
+8. [Data Generation (Spectral / JAX‑CFD)](#data-generation-spectral--jaxcfd)  
+9. [Datasets & Normalization](#datasets--normalization)  
+10. [Model (UNet)](#model-unet)  
+11. [Training](#training)  
+    - [Offline (Curriculum on Rollout Horizon)](#offline-curriculum-on-rollout-horizon)  
+    - [Online (Streaming Emulation)](#online-streaming-emulation)  
+    - [Rollout Loss — Mathematical Formulation](#rollout-loss--mathematical-formulation)  
+12. [Inference & Diagnostics](#inference--diagnostics)  
+13. [Artifacts, Logs & Reproducibility](#artifacts-logs--reproducibility)  
+14. [Troubleshooting](#troubleshooting)  
+15. [Acknowledgements & Citation](#acknowledgements--citation)  
+16. [License](#license)
 
 ---
 
-## 3. Repository Structure
+## Scope & Objectives
+- **Motivation.** CFD solvers produce large, continuous streams of high‑dimensional states. Persisting full offline corpora is often infeasible due to storage/I/O constraints. This repository targets:  
+  (i) **surrogate modeling** of 2D turbulence (forced ≈ stationary; decaying = non‑stationary) with **UNet**;  
+  (ii) an **online‑learning emulation** to study streaming/continual training without epochs and to mimic practical CFD pipelines.
+- **Goal.** Provide a clean, configurable baseline for **offline** training (with curriculum on rollout length) and an **online** emulation, plus tools for **inference** and **physical diagnostics**.
 
+---
+
+## Key Features
+- **Data generation** (forced & decaying turbulence) using a **spectral Navier–Stokes** solver (JAX‑CFD) with HDF5 export + physical metadata.
+- **Datasets & loaders** with **on‑the‑fly normalization** from HDF5 stats and **multi‑step targets** for rollout supervision.
+- **UNet** surrogate; **rollout** is implemented **in the training loop** (no autoregressive wrapper).
+- **Offline curriculum** on rollout horizon (e.g., 1 → 2 → 4 → 8) to stabilize optimization and expose the model to longer horizons progressively.
+- **Online emulation** (producer/consumer index buffer): streaming‑style training **without epochs**, stopping on target loss or max rounds.
+- **Inference** in free or chunked mode; **TKE** and **isotropic spectrum** metrics; consistent plotting and GIFs.
+- **YAML‑driven configuration**, per‑run config snapshot, CSV logs, TensorBoard events, checkpoints, and figures.
+
+---
+
+## Repository Structure
 ```
-repo-root/
-├─ src/
-│  ├─ datagen/          # Data generation via JAX-CFD + HDF5 writing
-│  ├─ datasets/         # VorticityDataset, concatenation helpers, DataLoader helpers
-│  ├─ models/           # UNet, AutoRegUNet
-│  ├─ training/         # OfflineTrainer, OnlineTrainer (streaming emulation)
-│  └─ inference/        # Free/chunked rollout, metrics (TKE, spectrum), plotting, GIF
-├─ configs/
-│  ├─ data/             # YAML configs: decaying/, forced/
-│  ├─ train/            # YAML configs: offline/, online/
-│  └─ infer/            # YAML config: inference settings
-├─ data/
-│  ├─ DecayingTurbulence/
-│  └─ ForcedTurbulence/     # one subfolder per generated experiment
-├─ runs/                # offline/ and online/ runs: checkpoints, logs, TensorBoard
-└─ predictions/         # per-run predictions (.h5) and diagnostic figures
+configs/                      # YAML configs
+  data/                       #   data generation (decaying/, forced/)
+  train/                      #   training (offline/, online/)
+  infer/                      #   inference
+data/                         # generated experiments (DecayingTurbulence/, ForcedTurbulence/)
+predictions/                  # inference outputs (.h5 + figures) per run
+runs/                         # training runs: checkpoints, logs, events, config copies
+src/                          # source code (all subpackages have __init__.py)
+  datagen/                    #   JAX-CFD generation + HDF5 writer
+  datasets/                   #   VorticityDataset, dataloader helpers
+  inference/                  #   rollout core, metrics, plotting, CLI
+  models/                     #   UNet
+  training/                   #   offline.py, online.py, trainer.py, losses.py, train.py
+README.md
+requirements.txt              # core training/inference deps (PyTorch stack)
+src/datagen/requirements_jaxcfd.txt   # JAX/JAX-CFD deps for data generation
 ```
 
-All `src/*` subpackages contain `__init__.py` to support `python -m` execution from the repository root.
+Run **all** modules from the repository root using **`python -m`** (ensures imports resolve).
 
 ---
 
-## 4. System Requirements
-
+## System Requirements
 - **Python** ≥ 3.10  
-- **GPU** recommended (CUDA-enabled PyTorch and, optionally, JAX GPU builds)  
-- Core libraries: **PyTorch**, **NumPy**, **h5py**, **PyYAML**, **Matplotlib**, **TensorBoard**  
-- For data generation: **JAX** and **JAX-CFD** (CPU or GPU build as available)
+- **GPU** recommended for training (PyTorch). JAX‑CFD supports CPU or GPU.  
+- Core libs: PyTorch, NumPy, h5py, PyYAML, Matplotlib, TensorBoard.  
+- For generation: JAX, JAX‑CFD (CPU or GPU build depending on your platform).
 
+> HDF5 on networked filesystems: prefer `num_workers=0` in DataLoaders to avoid I/O contention.
 
 ---
 
-## 5. Installation
+## Two Environments (Recommended Setup)
+Two separate virtual environments are recommended to avoid CUDA/cuDNN conflicts between **PyTorch** and **JAX‑CFD**.
 
+### A) Training/Inference environment (PyTorch)
 ```bash
-# From repository root
-python -m venv .venv
-
+# from repo root
+python -m venv .venv_torch
 # Linux/macOS
-source .venv/bin/activate
+source .venv_torch/bin/activate
 # Windows (PowerShell)
-# .venv\Scripts\Activate.ps1
+# .venv_torch\Scripts\Activate.ps1
 
 pip install -r requirements.txt
+
+# quick test
+python -c "import torch; print('torch', torch.__version__, 'cuda?', torch.cuda.is_available())"
 ```
 
-JAX/JAX-CFD installations vary by platform; consult the JAX and JAX-CFD documentation for the appropriate wheels and versions.
-
----
-
-## 6. Data Generation (Spectral Solver via JAX-CFD)
-
-**Execution principle:** data are generated with a spectral Navier–Stokes integrator (Crank–Nicolson / Runge–Kutta in JAX-CFD), then stored as HDF5 with physical metadata and basic statistics.
-
-**Entrypoint:** `src/datagen/generate.py` (always run with `python -m` from the repository root).
-
-### 6.1 Forced (stationary) example
+### B) Data‑Generation environment (JAX‑CFD)
 ```bash
-python -m src.datagen.generate   --config configs/data/forced/forced.yaml   --expe_name forced_seed42
+# from repo root
+python -m venv .venv_jax
+# Linux/macOS
+source .venv_jax/bin/activate
+# Windows (PowerShell)
+# .venv_jax\Scripts\Activate.ps1
+
+pip install -r src/datagen/requirements_jaxcfd.txt
+
+# quick test
+python -c "import jax; print('jax', jax.__version__)"
 ```
 
-### 6.2 Decaying (non-stationary) example
+> Keep the environments **separate**. Do not install JAX into `.venv_torch`, nor PyTorch into `.venv_jax`.
+
+---
+
+## Configure Local Paths (One-Time)
+Some training scripts expect **absolute paths** for configs/data/runs. As paths are machine‑specific, use **placeholders** in commands and/or **edit the path constants** in the source files to point to **your** local clone.
+
+- Determine your absolute repo path `<ABS_REPO>`:  
+  Linux/macOS → `pwd`; Windows PowerShell → `Get-Location` at repo root.  
+  Examples: `/home/alice/CFDStreamSurrogate` or `C:\Users\Alice\CFDStreamSurrogate`.
+
+- If required by your version of the code, update absolute root constants (e.g., in `src/training/train.py`, `src/training/trainer.py`) so that `/scratch/.../StageGitlab/...` becomes `<ABS_REPO>/...` on your machine.
+
+> The commands below use **`<ABS_REPO>`** as a **placeholder**. Replace it with your own absolute path. On Windows, keep the quotes around paths with spaces.
+
+---
+
+## Quick Start (TL;DR)
 ```bash
-python -m src.datagen.generate   --config configs/data/decaying/decaying.yaml   --expe_name decaying_seed42
-```
+# 1) generate data (JAX env)
+#    (example: forced turbulence)
+python -m src.datagen.generate \
+  --config <ABS_REPO>/configs/data/forced/forced.yaml \
+  --expe_name forced_seed42
 
-**Outputs:** each generation produces a new experiment directory such as:
-```
-data/ForcedTurbulence/forced_seed42/{vorticity.h5, config.yaml}
-data/DecayingTurbulence/decaying_seed42/{vorticity.h5, config.yaml}
-```
+# 2) train offline (PyTorch env)
+python -m src.training.train \
+  --config <ABS_REPO>/configs/train/offline/offline.yaml \
+  --expe_name unet_offline_baseline
 
-**HDF5 content (schema):**
-- Dataset: `vorticity` with shape `(T, H, W)` and dtype `float32` (by default).
-- Attributes (required):  
-  - Statistical: `mean`, `std`, `var`, `min`, `max`  
-  - Temporal: `dt`, `time` (vector length `T`)  
-  - Simulation: `viscosity`, `inner_steps`, `outer_steps`, `final_time`, `solver_iteration_time`  
-  - Domain: `x_min`, `x_max`, `y_min`, `y_max`  
-  - Tag: `kind` in {{`forced`, `decaying`}}
-
----
-
-## 7. Datasets and Normalization
-
-**Module:** `src/datasets/VorticityDataset.py`
-
-- **Normalization**: per-file `mean/std` are read from the HDF5 attributes, and applied on-the-fly.  
-- **Samples**: for time index `t`, return input `x_t ∈ ℝ^{1×H×W}` and target sequence `y_{{t+1: t+n}} ∈ ℝ^{{n×H×W}}` with `n = nstep`.  
-- **Effective length**: `len = T_effective − nstep` where `T_effective` equals `T` or a user-specified `db_size`.  
-- **Concatenation**: `build_dataset([exp_dir1, exp_dir2, ...])` returns either a single dataset or a `ConcatDataset` that **does not** create cross-simulation windows.  
-- **DataLoader**: `make_dataloader([...], nstep, batch_size, shuffle, num_workers, pin_memory)` wraps the dataset into a standard PyTorch DataLoader.
-
-Example (Python API):
-```python
-from src.datasets.VorticityDataset import make_dataloader
-
-loader = make_dataloader(
-    ["data/ForcedTurbulence/gen_..."],
-    nstep=4,
-    batch_size=8,
-    shuffle=True,
-    num_workers=0,
-    pin_memory=False,
-)
+# 3) run inference (PyTorch env)
+python -m src.inference.infer \
+  --config <ABS_REPO>/configs/infer/infer.yaml
 ```
 
 ---
 
-## 8. Models
+## Data Generation (Spectral / JAX‑CFD)
+Activate **`.venv_jax`**. The generator uses the **parent folder** of the config to select **forced** vs **decaying**.
 
-**UNet**: encoder–decoder with skip connections (four scales). Each block applies `(Conv3×3 → GroupNorm(1) → ReLU) × 2`. `padding_mode` supports `"circular"` to reflect periodic CFD domains.
-
-**AutoRegUNet**: extends UNet to output `n` consecutive steps in a single forward pass, concatenated on the channel dimension (`n × num_classes`). This aligns naturally with multi-step supervision from the dataset (`nstep`).
-
----
-
-## 9. Training
-
-**Entrypoint:** `src/training/train.py` (execute from repository root with `python -m`). The trainer is selected by the **location** of the YAML configuration.
-
-### 9.1 Offline (Curriculum on Rollout Horizon)
-
+### CLI
 ```bash
-python -m src.training.train   --config configs/train/offline/offline.yaml   --expe_name unet_offline_baseline
+python -m src.datagen.generate \
+  --config <ABS_REPO>/configs/data/forced/forced.yaml \
+  [--expe_name <NAME>]
 ```
-Key configuration concepts:
-- `curr_lr_steps: [1, 2, 4, 8]` to progressively increase the supervised rollout horizon.
-- `optim` (e.g., learning rate), `train.epochs`, batch size, workers, etc.
-
-**Outputs:** `runs/offline/<run_name>/` with `checkpoints/`, `events/` (TensorBoard), `logs/` (CSV), and `loss_epochs.png`.
-
-### 9.2 Online (Streaming Emulation)
-
 ```bash
-python -m src.training.train   --config configs/train/online/online.yaml   --expe_name unet_online_emulated
+python -m src.datagen.generate \
+  --config <ABS_REPO>/configs/data/decaying/decaying.yaml \
+  [--expe_name <NAME>]
 ```
 
-**Principle of the online pipeline (emulation):**
-- A **producer thread** generates (or selects) sample **indices** and pushes them into a **bounded ring buffer** at a configurable cadence (`producer_dt`, `buffer_capacity`).  
-- The **consumer (training loop)** pops indices and constructs batches on-the-fly, drawing `(x_t, y_{{t+1: t+n}})` directly from the dataset.  
-- Training proceeds without epochs; termination is controlled by **stopping criteria** (e.g., `target_loss`, `max_rounds`).  
-- Optional hooks can implement **sample filtering**, simple **replay**, or curriculum over the rollout horizon (a single horizon is typical in online mode).
+**Arguments**
+- `--config` (required): YAML under `configs/data/{forced|decaying}/`. The parent folder determines the generator.  
+- `--expe_name` (optional): explicit experiment directory name. If omitted, a timestamp‑based name is generated: `gen_YYYYMMDD-HHMMSS_{forced|decaying}_seedXX` (seed comes from the YAML).
 
-**Outputs:** `runs/online/<run_name>/` with `checkpoints/`, CSV logs, TensorBoard events, and `loss_rounds.png`.
+**Outputs**
+```
+<ABS_REPO>/data/ForcedTurbulence/<EXP_NAME>/{vorticity.h5, config.yaml}
+<ABS_REPO>/data/DecayingTurbulence/<EXP_NAME>/{vorticity.h5, config.yaml}
+```
+`vorticity.h5` contains dataset `(T,H,W)` under key `vorticity` with attributes: `mean,std,var,min,max,dt,time,viscosity,inner_steps,outer_steps,final_time,solver_iteration_time,x_min,x_max,y_min,y_max,kind`.
 
 ---
 
-## 10. Inference and Diagnostics
+## Datasets & Normalization
+Module: `src/datasets/VorticityDataset.py`
 
-**Entrypoint:** `src/inference/infer.py` (execute with `python -m`).
+- Returns pairs `(x_t, Y_t)` with `x_t ∈ ℝ^{1×H×W}` and `Y_t = (x_{t+1},…,x_{t+n}) ∈ ℝ^{n×H×W}`, where `n = nstep`.
+- Normalization uses per‑file `mean/std` stored in HDF5 attributes.  
+- Concatenation across experiments is supported without cross‑boundary leakage.
+- For training, the loader is built with `nstep = max(curr_lr_steps)` to ensure targets exist for the largest horizon; the loop then truncates to the current horizon stage.
 
+---
+
+## Model (UNet)
+- Encoder–decoder with four scales and skip connections. Each block: `(Conv3×3 → GroupNorm(1) → ReLU) × 2`.
+- `padding_mode` supports `"circular"` to reflect periodic domains.
+- **Rollout supervision** is implemented **in the training loop** (the UNet predicts 1 step; multi‑step rollout is constructed iteratively).
+
+---
+
+## Training
+Activate **`.venv_torch`**. Launch from repo root with **`python -m`**.
+
+### Offline (Curriculum on Rollout Horizon)
 ```bash
-python -m src.inference.infer   --config configs/infer/infer.yaml
+python -m src.training.train \
+  --config <ABS_REPO>/configs/train/offline/offline.yaml \
+  [--expe_name <RUN_NAME>]
+```
+**YAML highlights (typical)**
+- `data`: `experiments_dirs` (list of `<ABS_REPO>/data/.../gen_...`), `h5_name`, `key`, `batch_size`, `shuffle`, `num_workers`, `pin_memory`, optional `db_size` limit.  
+- `model`: `in_channels`, `num_classes`, `padding_mode`, `padding`.  
+- `optim`: e.g., learning rate.  
+- `curr_lr_steps`: list of rollout horizons, e.g., `[1,2,4,8]`.  
+- `train`: number of `epochs` per stage.
+
+**Curriculum (definition)**  
+Given horizons \(\mathcal{H}=\{h_1<h_2<\dots<h_S\}\), training proceeds in **S stages**. At stage \(s\), supervision uses horizon \(h_s\). The DataLoader was built with \(nstep=\max(\mathcal{H})\) so that all targets are available; the loop truncates to the current \(h_s\).
+
+**Outputs**
+```
+<ABS_REPO>/runs/offline/<RUN_NAME>/
+  checkpoints/           # periodic + final .pth
+  events/                # TensorBoard
+  logs/                  # CSV + loss_epochs.png
+  config.yaml            # YAML snapshot
 ```
 
-**Configuration fields:**
-- `model`: UNet hyperparameters and checkpoint path under `runs/.../checkpoints/...`  
-- `rollout`: `mode` in {{`free`, `chunked`}}; `seed_index` for the initial frame; `block_n` if `chunked`  
-- `data`: `experiment_dir` (e.g., `data/DecayingTurbulence/gen_...`), `h5_name`, `key`
-
-**Outputs:**
+### Online (Streaming Emulation)
+```bash
+python -m src.training.train \
+  --config <ABS_REPO>/configs/train/online/online.yaml \
+  [--expe_name <RUN_NAME>]
 ```
-predictions/<run_name>/
-├─ config.yaml
-├─ preds/vorticity.h5            # predicted vorticity sequence with metadata and stats
-└─ figures/
-   ├─ tke_timeseries.png         # kinetic energy over time (optional injection markers)
-   ├─ energy_spectrum.png        # isotropic spectrum with optional reference slope overlays
-   └─ prediction_vs_simulation.gif  # qualitative side-by-side animation
+**Principle**  
+- **Producer thread** pushes time indices into a bounded **ring buffer** (capacity `buffer_capacity`, cadence `producer_dt`).  
+- **Consumer (training loop)** pops indices and builds batches on‑the‑fly from the dataset; training proceeds **without epochs**.  
+- A **single** horizon is used: `curr_lr_steps: [h]`.  
+- Stopping criteria: `target_loss` or `max_rounds`.
+
+**Outputs**
+```
+<ABS_REPO>/runs/online/<RUN_NAME>/
+  checkpoints/
+  events/
+  logs/                  # CSV + loss_rounds.png
+  config.yaml
 ```
 
-`src/inference/metrics.py` computes vorticity→velocity (FFT), TKE time series, and isotropic spectra; `src/inference/plotting.py` renders standard figures with consistent styles.
+### Rollout Loss — Mathematical Formulation
+Let normalized input at time \(t\) be \(x_t\). Let \(f_\theta\) be the UNet that predicts one step ahead. The multi‑step rollout is built in the loop:
+\[
+\hat{x}_{t+1} = f_\theta(x_t),\quad
+\hat{x}_{t+2} = f_\theta(\hat{x}_{t+1}),\ \dots,\
+\hat{x}_{t+k} = f_\theta(\hat{x}_{t+k-1}).
+\]
+For a given horizon \(h\), the per‑sample rollout loss is:
+\[
+\mathcal{L}_\text{rollout}^{(h)}(t;\theta) \;=\;
+\sum_{k=1}^{h} w_k\;\ell\!\big(\hat{x}_{t+k},\,x_{t+k}\big),
+\]
+where \(\ell\) is a pointwise discrepancy (e.g., MSE) and \(w_k\ge 0\) optional weights (uniform by default). With a windowed physical penalty (e.g., TKE), one may use:
+\[
+\mathcal{L}^{(h)}(t;\theta)
+= \sum_{k=1}^{h} w_k\,\ell_\text{MSE}(\hat{x}_{t+k}, x_{t+k})
+\;+\; \lambda\,\Phi\!\big(\hat{x}_{t+1:t+h}, x_{t+1:t+h}\big),
+\]
+with \(\Phi\) a physical term aggregated over \([t+1,t+h]\) and \(\lambda\ge 0\).
+
+> In the current implementation, the active loss is **MSE**. Additional losses (e.g., TKE/TKEMSE) are available in the codebase but disabled by default.
 
 ---
 
-## 11. Configuration Files
+## Inference & Diagnostics
+```bash
+python -m src.inference.infer \
+  --config <ABS_REPO>/configs/infer/infer.yaml
+```
+**YAML highlights**
+- `model`: UNet hyperparameters + `checkpoint` path under `<ABS_REPO>/runs/.../checkpoints/...`  
+- `rollout`: `mode: "free"` or `"chunked"`, `seed_index` (start frame), `block_n` for chunked mode  
+- `data`: `experiment_dir` (e.g., `<ABS_REPO>/data/.../gen_...`), `h5_name`, `key`
 
-All components are driven by YAML files under `configs/`:
-- **Data generation**: `configs/data/decaying/*.yaml`, `configs/data/forced/*.yaml`  
-  - viscosity, max velocity, CFL, smoothing flag, `final_time`, `frames`, domain bounds, grid resolution, RNG seed, dataset key, etc.
-- **Training (offline/online)**: `configs/train/offline/*.yaml`, `configs/train/online/*.yaml`  
-  - data paths (experiment directories), DataLoader options, model hyperparameters, optimizer settings, curriculum or online-specific parameters
-- **Inference**: `configs/infer/infer.yaml`  
-  - model hyperparameters, checkpoint path, rollout mode and parameters, data source
-
-Each run persists a copy of the used configuration for traceability.
+**Outputs**
+```
+<ABS_REPO>/predictions/<RUN_NAME>/
+  config.yaml
+  preds/vorticity.h5
+  figures/
+    tke_timeseries.png
+    energy_spectrum.png
+    prediction_vs_simulation.gif
+```
 
 ---
 
-## 12. Reproducibility
+## Artifacts, Logs & Reproducibility
+- **Config snapshot**: every run copies its YAML to the run directory.  
+- **CSV logs**: per batch/epoch (offline) or per round (online).  
+- **TensorBoard**: summaries under `events/` for quick inspection.  
+- **Checkpoints**: periodic + final `.pth`.  
+- **Figures**: standard plots saved per run under `logs/` (training) or `figures/` (inference).  
+- **Determinism**: seeds are configurable in YAML for generation and training.
 
-- **Environment**: use a dedicated virtual environment to fix dependency versions.  
-- **Determinism**: seeds are configurable for data generation and training.  
-- **Logging**: CSV logs (batch/epoch for offline; round-based for online) and TensorBoard summaries are produced for each run.  
-- **Artifacts**: checkpoints, configuration snapshots, prediction files, and figures are stored under `runs/` and `predictions/`.
+---
+
+## Troubleshooting
+- **ModuleNotFoundError** → Always launch from repo root with `python -m ...` (ensures package imports).  
+- **HDF5 slow/hangs** (network filesystem) → set `num_workers: 0` in training YAML.  
+- **CUDA not visible (PyTorch)** → check `nvidia-smi`; ensure you installed the correct PyTorch wheel for your CUDA.  
+- **JAX/JAX‑CFD install issues** → prefer CPU first; then switch to GPU following JAX official instructions matching your CUDA version.  
+- **Absolute path errors** → replace `<ABS_REPO>` placeholders by your real absolute path; if your code version hard‑codes roots, edit those constants to point to `<ABS_REPO>`.
+
+---
+
+## Acknowledgements & Citation
+Data generation uses **JAX‑CFD** (spectral Navier–Stokes solver). Please cite:  
+- Google Research, “**JAX‑CFD: Computational Fluid Dynamics in JAX**,” GitHub. https://github.com/google/jax-cfd (accessed YYYY‑MM‑DD).
 
 ---
 <img width="3465" height="2058" alt="losses_grid_forced2" src="https://github.com/user-attachments/assets/ab98b3b3-54db-4ecf-87bd-63d4c27aa7fc" />
