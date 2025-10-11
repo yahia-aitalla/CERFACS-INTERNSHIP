@@ -1,62 +1,39 @@
-## 7) Dataset (vorticity sequences, single or concatenated simulations)
+## 7) Dataset (vorticity sequences; single or concatenated simulations)
 
-`VorticityDataset` provides normalized frame–sequence pairs for **multi-step rollout supervision**. It reads an HDF5 file produced by the generator, takes normalization statistics from HDF5 **attributes**, and returns samples with the shapes below.
+`VorticityDataset` yields **normalized** vorticity frame–sequences for **multi-step rollout supervision**. It reads an HDF5 file produced by the generator, pulls normalization stats from HDF5 **attributes**, and returns samples with:
 
-- **Input** `$x_t$`: `(1, H, W)` — one normalized vorticity frame at time `$t$`  
-- **Target** `$Y_t^{(n)}$`: `(n, H, W)` — the next `$n$` normalized frames `[x_{t+1}, …, x_{t+n}]`
+- **Input** $x_t$ — shape `(1, H, W)`: one normalized vorticity frame at time $t$  
+- **Target** $Y_t^{(n)}$ — shape `(n, H, W)`: the next $n$ normalized frames $[x_{t+1}, \ldots, x_{t+n}]$
 
-**Normalization.** With file attributes `mean` and `std` (denoted `$\,\mu\,$` and `$\,\sigma\,$`), each frame is normalized as
-
-$$
-\tilde{x}_t \;=\; \frac{x_t - \mu}{\sigma},
-\qquad
-\tilde{Y}_t^{(n)} \;=\; [\,\tilde{x}_{t+1}, \dots, \tilde{x}_{t+n}\,].
-$$
-
-**Shapes per batch** (batch size `$B$`):
+**Normalization.** With attributes `mean` and `std` (denoted $\mu$ and $\sigma$), each frame is normalized as
 
 $$
-\tilde{X} \in \mathbb{R}^{B \times 1 \times H \times W},
-\qquad
+\tilde{x}_t = \frac{x_t - \mu}{\sigma}, \qquad
+\tilde{Y}_t^{(n)} = [\,\tilde{x}_{t+1}, \ldots, \tilde{x}_{t+n}\,].
+$$
+
+**Batch shapes** (batch size $B$):
+
+$$
+\tilde{X} \in \mathbb{R}^{B \times 1 \times H \times W}, \qquad
 \tilde{Y} \in \mathbb{R}^{B \times n \times H \times W}.
 $$
 
-### 7.1 HDF5 layout and required attributes
+### Single vs. multiple simulations
+- **Single experiment directory** → one `VorticityDataset`.
+- **Multiple experiment directories** → the builder returns a **`ConcatDataset`** that concatenates several `VorticityDataset` instances end-to-end; batching then interleaves samples across simulations (same `nstep`, `h5_name`, `key` across all).
+
+### HDF5 layout and required attributes
 - Dataset key (default): `vorticity` with shape `(T, H, W)`.
 - Required attributes written by the generator:  
   `mean`, `std`, `var`, `min`, `max`, `dt`, `time`, `viscosity`,  
   `inner_steps`, `outer_steps`, `final_time`, `solver_iteration_time`,  
   `x_min`, `x_max`, `y_min`, `y_max`, `kind` (`"forced"` or `"decaying"`).
-- `std` is safely floored internally to avoid division by zero.
+- The standard deviation is safely floored internally to avoid division by zero.
 
-### 7.2 Temporal indexing and effective length
-Let `$T$` be the number of frames in the file. If an optional cap `db_size` is used, the effective length is
-
-$$
-T_{\mathrm{eff}} \;=\; \min\!\big(T,\ \mathrm{db\_size}\big).
-$$
-
-For a rollout horizon `nstep = n`, the number of samples is
-
-$$
-\lvert \mathcal{D} \rvert \;=\; T_{\mathrm{eff}} - n,
-\qquad
-T_{\mathrm{eff}} > n.
-$$
-
-Each dataset index `$t$` returns `$x_t$` and the stacked target `$Y_t^{(n)} = [x_{t+1}, \dots, x_{t+n}]$`.
-
-### 7.3 Single simulation **or** concatenation of multiple simulations
-- **Single directory** → one `VorticityDataset` over that experiment.  
-- **Multiple directories** → the builder returns a **`ConcatDataset`** that concatenates several `VorticityDataset` instances end-to-end; batching then interleaves samples across simulations transparently (same `nstep`, `h5_name`, `key` across all).
-
-### 7.4 Builder and DataLoader
-- `build_dataset(experiments_dirs, *, h5_name="vorticity.h5", key="vorticity", nstep, db_size, dtype)`  
-  → returns a `VorticityDataset` (one dir) or a `ConcatDataset` (many dirs).
-- `make_dataloader(..., batch_size, shuffle, num_workers, pin_memory, ...)`  
-  → wraps the dataset into a PyTorch `DataLoader`.
-
-> **Tip (NFS/HDF5):** on network filesystems, prefer `num_workers: 0` to avoid I/O contention.
+> **Rendering note (for GitHub/Markdown math):**  
+> Use `$...$` for inline math and `$$...$$` for display equations.  
+> Do **not** wrap math in backticks. Leave a blank line before/after `$$` blocks for reliable rendering.
 
 ---
 
