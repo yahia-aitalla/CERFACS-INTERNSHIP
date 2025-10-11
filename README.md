@@ -6,19 +6,19 @@ This repository delivers an end‑to‑end stack to (i) **generate** 2D turbulen
 
 ---
 
-## 1) Why this project (scientific motivation)
+## 1) Scientific motivation and problem context
 
-### 1.1 Surrogate models
+### 1.1 Surrogate modeling in CFD
 A surrogate $\,\mathcal{S}_\theta\,$ approximates the input–output map of a CFD solver $\,\mathcal{F}\,$, delivering predictions **orders of magnitude faster** than direct numerical simulation while targeting application-level fidelity (design sweeps, real-time control, hybrid solver coupling). In modern ML-CFD, neural surrogates (e.g., UNet/CNN variants) complement reduced-order and kernel methods to accelerate end-to-end workflows.
 
 
 
-### 1.2 Why (near-)online learning in CFD
+### 1.2 Storage and I/O constraints: online learning
 High-fidelity simulations produce **long spatiotemporal trajectories** at **high data rates**; persisting complete snapshot corpora creates a **storage/I/O bottleneck**. In response, HPC practice couples simulation and learning **in situ / online** so that models **consume data as they are produced**, reducing disk pressure and matching deployment scenarios where adaptation on streams is required (producer/consumer data paths, minimal I/O).
 
 
 
-### 1.3 Why decaying turbulence is hard
+### 1.3 Decaying turbulence (online continual learning challenges)
 Under sustained forcing, isotropic turbulence can be **statistically stationary**, enabling stable sampling for training/validation. In contrast, **freely decaying** turbulence is **non-stationary**: kinetic energy and spectral content **evolve over time**, so even a single trajectory exhibits **distribution shift**. In streaming/continual settings, such shift amplifies **catastrophic forgetting** of early-time regimes. Consequently, decaying turbulence is a stringent benchmark for online/continual learning, whereas the forced case is comparatively easier.
 
 
@@ -30,7 +30,7 @@ Under sustained forcing, isotropic turbulence can be **statistically stationary*
 - **Spectral data generation** (JAX‑CFD) → HDF5 with comprehensive physical metadata.
 - **Dataset API** with **on‑the‑fly normalization** (HDF5 stats) and **multi‑step targets** for rollout supervision.
 - **UNet** surrogate; **rollout is implemented inside the training loop** (no external autoregressive wrapper).
-- **Offline curriculum** on rollout horizon (e.g., 1 → 2 → 4 → 8) to stabilize optimization on longer horizons.
+- **Offline training with curriculum learning** on rollout horizon (e.g., 1 → 2 → 4 → 8) to stabilize optimization on longer horizons.
 - **Online emulation** (bounded producer/consumer ring buffer) with **no epochs**, stopping by **target loss** or **max rounds**.
 - **Inference** (free or chunked rollout) plus **TKE** and **isotropic energy spectrum** plots and **GIFs**.
 - **YAML‑driven configuration**, per‑run config snapshot, **CSV logs**, **TensorBoard events**, **checkpoints**, and **figures**.
@@ -239,7 +239,7 @@ $$
 
 ---
 
-## 8) Model (U-Net)
+## 8) Model (UNet)
 
 A 2D UNet (four scales) with skip connections; each block is `(Conv3×3 → GroupNorm(1) → ReLU) × 2`. `padding_mode="circular"` is available for periodic domains.  
 **Important:** the model is **one‑step**; **multi‑step rollout is constructed inside the training loop**.
@@ -261,9 +261,18 @@ $$
 $$
 to ground truth over the same window. This reduces the train–inference gap and improves long-horizon stability—especially important on **non-stationary** trajectories such as decaying turbulence.
 
+**Illustrations (click to open full image):**
+
+[![Decaying turbulence — rollout effect](img/final_grid_tke_64x64vorticity.png)](img/final_grid_tke_64x64vorticity.png)
+[![Forced turbulence — rollout effect](img/tke_rows_forced_free.png)](img/tke_rows_forced_free.png)
+
+See the figures directly: 
+- **Decaying turbulence:** [img/final_grid_tke_64x64vorticity.png](img/final_grid_tke_64x64vorticity.png)  
+- **Forced turbulence:** [img/tke_rows_forced_free.png](img/tke_rows_forced_free.png)
+
 ---
 
-## 10) Mathematical formulation 
+## 10) Formalism and Optimization Criterion 
 
 ### 10.1 Notation
 - $x_t \in \mathbb{R}^{H \times W}$: **normalized** vorticity at time $t$.
@@ -381,6 +390,8 @@ tensorboard --logdir <ABS_REPO>/runs/<strategy>/<RUN_NAME>/events --port 6006
 - **Checkpoints**: periodic + final.  
 - **Figures**: loss curves (training) and TKE/spectrum/GIFs (inference).  
 - **Seeding**: configurable in data generation and training YAMLs.
+
+---
 
 
 ---
