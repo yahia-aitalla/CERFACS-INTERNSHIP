@@ -382,13 +382,6 @@ tensorboard --logdir <ABS_REPO>/runs/<strategy>/<RUN_NAME>/events --port 6006
 - **Figures**: loss curves (training) and TKE/spectrum/GIFs (inference).  
 - **Seeding**: configurable in data generation and training YAMLs.
 
----
-
-## 15) CFD solver citation
-Data generation uses **JAX‑CFD** (spectral Navier–Stokes). Please cite:  
-Google Research, “**JAX‑CFD: Computational Fluid Dynamics in JAX**,” GitHub, https://github.com/google/jax-cfd (accessed YYYY‑MM‑DD).
-
----
 
 ---
 <img width="3465" height="2058" alt="losses_grid_forced2" src="https://github.com/user-attachments/assets/ab98b3b3-54db-4ecf-87bd-63d4c27aa7fc" />
