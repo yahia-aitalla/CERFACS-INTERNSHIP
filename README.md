@@ -1,5 +1,4 @@
-#
-**A modular pipeline for surrogate modeling of 2D CFD (forced & decaying turbulence) with offline training and online-learning emulation.**
+# A modular pipeline for surrogate modeling of 2D CFD (forced & decaying turbulence) with offline training and online-learning emulation.
 
 This repository provides an end-to-end, reproducible stack to (i) generate controlled 2D turbulence datasets using a **spectral solver**, (ii) train a **UNet** surrogate with **multi-step rollout supervision** (with **curriculum** on horizon), (iii) emulate **online/streaming training** (no epochs), and (iv) run **inference & diagnostics** (TKE, isotropic spectra, GIFs). The document is neutral and focuses on **objectives, capabilities, and usage**.
 
